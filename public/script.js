@@ -84,6 +84,68 @@ function sourceLabel(sourceType) {
   return 'Lokal';
 }
 
+function getYouTubeId(urlValue) {
+  try {
+    const url = new URL(urlValue);
+    if (url.hostname.includes('youtu.be')) {
+      return url.pathname.split('/').filter(Boolean)[0];
+    }
+    if (url.pathname.startsWith('/shorts/')) {
+      return url.pathname.split('/').filter(Boolean)[1];
+    }
+    if (url.pathname.startsWith('/embed/')) {
+      return url.pathname.split('/').filter(Boolean)[1];
+    }
+    return url.searchParams.get('v');
+  } catch (error) {
+    return null;
+  }
+}
+
+function getGoogleDriveId(urlValue) {
+  try {
+    const url = new URL(urlValue);
+    if (url.pathname.includes('/folders/')) {
+      return null;
+    }
+    const filePathMatch = url.pathname.match(/\/file\/d\/([^/]+)/);
+    return filePathMatch?.[1] || url.searchParams.get('id');
+  } catch (error) {
+    return null;
+  }
+}
+
+function getVideoUrlError(sourceType, urlValue) {
+  if (sourceType === 'local') return '';
+  const trimmedUrl = urlValue.trim();
+
+  if (!trimmedUrl) {
+    return sourceType === 'google_drive'
+      ? 'URL Google Drive wajib diisi.'
+      : 'URL YouTube wajib diisi.';
+  }
+
+  try {
+    const url = new URL(trimmedUrl);
+    if (sourceType === 'google_drive') {
+      if (url.pathname.includes('/folders/')) {
+        return 'Itu link folder Google Drive. Buka file videonya, klik Share, lalu salin link file video.';
+      }
+      if (!getGoogleDriveId(trimmedUrl)) {
+        return 'URL Google Drive harus berupa link file, contoh https://drive.google.com/file/d/FILE_ID/view.';
+      }
+    }
+
+    if (sourceType === 'youtube' && !getYouTubeId(trimmedUrl)) {
+      return 'URL YouTube harus berupa link video, contoh https://www.youtube.com/watch?v=VIDEO_ID.';
+    }
+  } catch (error) {
+    return 'URL harus lengkap, contoh https://drive.google.com/file/d/FILE_ID/view.';
+  }
+
+  return '';
+}
+
 function renderPlayer(video) {
   if (video.source_type === 'youtube' || video.source_type === 'google_drive') {
     return `
@@ -281,8 +343,16 @@ async function handleSubmit(event) {
   const formData = new FormData(form);
   const url = id ? `/api/videos/${id}` : '/api/videos';
   const method = id ? 'PUT' : 'POST';
+  const sourceType = document.querySelector('#sourceType')?.value || 'local';
+  const videoUrl = document.querySelector('#videoUrl')?.value || '';
+  const urlError = getVideoUrlError(sourceType, videoUrl);
 
   message.textContent = 'Menyimpan...';
+
+  if (urlError) {
+    message.textContent = urlError;
+    return;
+  }
 
   try {
     await requestJson(url, {

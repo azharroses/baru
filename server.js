@@ -131,11 +131,42 @@ function getYouTubeId(urlValue) {
 function getGoogleDriveId(urlValue) {
   try {
     const url = new URL(urlValue);
+    if (url.pathname.includes('/folders/')) {
+      return null;
+    }
     const filePathMatch = url.pathname.match(/\/file\/d\/([^/]+)/);
     return filePathMatch?.[1] || url.searchParams.get('id');
   } catch (error) {
     return null;
   }
+}
+
+function getExternalUrlError(sourceType, videoUrl) {
+  if (!videoUrl) {
+    return sourceType === 'google_drive'
+      ? 'URL Google Drive wajib diisi.'
+      : 'URL YouTube wajib diisi.';
+  }
+
+  try {
+    const url = new URL(videoUrl);
+    if (sourceType === 'google_drive') {
+      if (url.pathname.includes('/folders/')) {
+        return 'Link yang dipakai adalah link folder Google Drive. Buka file videonya, lalu salin link file video, bukan link folder.';
+      }
+      if (!getGoogleDriveId(videoUrl)) {
+        return 'URL Google Drive tidak valid. Gunakan format https://drive.google.com/file/d/FILE_ID/view.';
+      }
+    }
+
+    if (sourceType === 'youtube' && !getYouTubeId(videoUrl)) {
+      return 'URL YouTube tidak valid. Gunakan format https://www.youtube.com/watch?v=VIDEO_ID.';
+    }
+  } catch (error) {
+    return 'URL harus lengkap, contoh https://drive.google.com/file/d/FILE_ID/view.';
+  }
+
+  return '';
 }
 
 function buildExternalVideoPath(sourceType, videoUrl) {
@@ -241,10 +272,18 @@ app.post('/api/videos', uploadFields, (req, res) => {
     ? `/videos/${videoFile.filename}`
     : buildExternalVideoPath(sourceType, video_url.trim());
 
+  const externalUrlError = sourceType === 'local' ? '' : getExternalUrlError(sourceType, video_url.trim());
+  if (externalUrlError) {
+    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+    res.status(400).json({ message: externalUrlError });
+    return;
+  }
+
   if (!videoPath) {
     if (videoFile) removeFile(`/videos/${videoFile.filename}`);
     if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'URL Google Drive atau YouTube tidak valid.' });
+    res.status(400).json({ message: 'URL video tidak valid.' });
     return;
   }
 
@@ -311,10 +350,18 @@ app.put('/api/videos/:id', uploadFields, (req, res) => {
     return;
   }
 
+  const externalUrlError = sourceType === 'local' || !externalUrl ? '' : getExternalUrlError(sourceType, externalUrl);
+  if (externalUrlError) {
+    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+    res.status(400).json({ message: externalUrlError });
+    return;
+  }
+
   if (!nextVideoPath) {
     if (videoFile) removeFile(`/videos/${videoFile.filename}`);
     if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'URL Google Drive atau YouTube tidak valid.' });
+    res.status(400).json({ message: 'URL video tidak valid.' });
     return;
   }
 
