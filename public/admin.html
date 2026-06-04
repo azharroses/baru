@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Video Library</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">Video Library</a>
+      <nav>
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Ganti tema">Gelap</button>
+        <a href="/">Halaman Utama</a>
+      </nav>
+    </header>
+
+    <main class="page admin-page">
+      <section class="editor-panel">
+        <div class="section-title">
+          <h1 id="formTitle">Tambah Video</h1>
+          <button id="resetButton" class="secondary-button" type="button">Reset</button>
+        </div>
+
+        <form id="videoForm" class="video-form">
+          <input id="videoId" type="hidden" />
+
+          <label>
+            Judul
+            <input id="title" name="title" type="text" required />
+          </label>
+
+          <label>
+            Deskripsi
+            <textarea id="description" name="description" rows="4"></textarea>
+          </label>
+
+          <div class="form-row">
+            <label>
+              Kategori
+              <input id="category" name="category" type="text" />
+            </label>
+            <label>
+              Tags
+              <input id="tags" name="tags" type="text" placeholder="tutorial, musik" />
+            </label>
+          </div>
+
+          <label>
+            Sumber Video
+            <select id="sourceType" name="source_type">
+              <option value="local">Upload Lokal</option>
+              <option value="google_drive">Google Drive</option>
+              <option value="youtube">YouTube</option>
+            </select>
+          </label>
+
+          <label id="videoUrlField" hidden>
+            URL Video
+            <input id="videoUrl" name="video_url" type="url" placeholder="https://drive.google.com/... atau https://youtube.com/watch?v=..." />
+          </label>
+
+          <div class="form-row">
+            <label id="videoFileField">
+              File Video
+              <input id="video" name="video" type="file" accept="video/*" />
+            </label>
+            <label>
+              Thumbnail
+              <input id="thumbnail" name="thumbnail" type="file" accept="image/*" />
+            </label>
+          </div>
+
+          <button class="primary-button" type="submit">Simpan Video</button>
+          <p id="formMessage" class="form-message" role="status"></p>
+        </form>
+      </section>
+
+      <section class="admin-list-panel">
+        <div class="section-title">
+          <h2>Video Tersimpan</h2>
+        </div>
+        <div id="adminList" class="admin-list"></div>
+        <p id="adminEmptyState" class="empty-state" hidden>Belum ada video.</p>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>

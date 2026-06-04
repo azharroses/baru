@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: video-library
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOW_LOCAL_UPLOADS
+        value: false
+      - key: ENABLE_YOUTUBE
+        value: false
+      - key: DEFAULT_SOURCE
+        value: google_drive

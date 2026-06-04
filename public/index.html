@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video Library</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">Video Library</a>
+      <nav>
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Ganti tema">Gelap</button>
+        <a href="/admin.html">Admin</a>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="toolbar">
+        <div>
+          <h1>Daftar Video</h1>
+          <p>Koleksi video lokal dari folder server.</p>
+        </div>
+        <input id="searchInput" type="search" placeholder="Cari judul, kategori, tag..." />
+      </section>
+
+      <section id="videoGrid" class="video-grid"></section>
+      <p id="emptyState" class="empty-state" hidden>Belum ada video.</p>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>

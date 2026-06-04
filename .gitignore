@@ -1,0 +1,9 @@
+node_modules/
+database.db
+database.db-*
+videos/*
+!videos/.gitkeep
+thumbnails/*
+!thumbnails/.gitkeep
+*.log
+.env
