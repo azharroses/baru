@@ -3,6 +3,7 @@ const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
 const initSqlJs = require('sql.js');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,6 +16,8 @@ const DB_PATH = path.join(ROOT_DIR, 'database.db');
 const ALLOW_LOCAL_UPLOADS = process.env.ALLOW_LOCAL_UPLOADS !== 'false';
 const ENABLE_YOUTUBE = process.env.ENABLE_YOUTUBE !== 'false';
 const DEFAULT_SOURCE = process.env.DEFAULT_SOURCE || (ALLOW_LOCAL_UPLOADS ? 'local' : 'google_drive');
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 [PUBLIC_DIR, VIDEOS_DIR, THUMBNAILS_DIR].forEach((dir) => {
   if (!fs.existsSync(dir)) {
@@ -23,6 +26,7 @@ const DEFAULT_SOURCE = process.env.DEFAULT_SOURCE || (ALLOW_LOCAL_UPLOADS ? 'loc
 });
 
 let db;
+let videoStore;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -212,6 +216,137 @@ function selectOne(sql, params = []) {
   return selectAll(sql, params)[0];
 }
 
+function createSqliteStore() {
+  return {
+    async listVideos() {
+      return selectAll('SELECT * FROM videos ORDER BY datetime(created_at) DESC, id DESC');
+    },
+    async getVideo(id) {
+      return selectOne('SELECT * FROM videos WHERE id = ?', [id]);
+    },
+    async createVideo(video) {
+      db.run(`
+        INSERT INTO videos (title, description, category, tags, source_type, video_path, thumbnail_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [
+        video.title,
+        video.description,
+        video.category,
+        video.tags,
+        video.source_type,
+        video.video_path,
+        video.thumbnail_path
+      ]);
+      saveDatabase();
+      return selectOne('SELECT * FROM videos ORDER BY id DESC LIMIT 1');
+    },
+    async updateVideo(id, video) {
+      db.run(`
+        UPDATE videos
+        SET title = ?, description = ?, category = ?, tags = ?, source_type = ?, video_path = ?, thumbnail_path = ?
+        WHERE id = ?
+      `, [
+        video.title,
+        video.description,
+        video.category,
+        video.tags,
+        video.source_type,
+        video.video_path,
+        video.thumbnail_path,
+        id
+      ]);
+      saveDatabase();
+      return selectOne('SELECT * FROM videos WHERE id = ?', [id]);
+    },
+    async deleteVideo(id) {
+      db.run('DELETE FROM videos WHERE id = ?', [id]);
+      saveDatabase();
+    },
+    async incrementViews(id) {
+      db.run('UPDATE videos SET views = views + 1 WHERE id = ?', [id]);
+      saveDatabase();
+      const changes = selectOne('SELECT changes() AS total');
+      if (!changes || changes.total === 0) return null;
+      return selectOne('SELECT * FROM videos WHERE id = ?', [id]);
+    }
+  };
+}
+
+function createSupabaseStore() {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+      persistSession: false
+    }
+  });
+
+  function throwIfError(error) {
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  return {
+    async listVideos() {
+      const { data, error } = await supabase
+        .from('videos')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false });
+      throwIfError(error);
+      return data || [];
+    },
+    async getVideo(id) {
+      const { data, error } = await supabase
+        .from('videos')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      throwIfError(error);
+      return data;
+    },
+    async createVideo(video) {
+      const { data, error } = await supabase
+        .from('videos')
+        .insert([video])
+        .select('*')
+        .single();
+      throwIfError(error);
+      return data;
+    },
+    async updateVideo(id, video) {
+      const { data, error } = await supabase
+        .from('videos')
+        .update(video)
+        .eq('id', id)
+        .select('*')
+        .single();
+      throwIfError(error);
+      return data;
+    },
+    async deleteVideo(id) {
+      const { error } = await supabase
+        .from('videos')
+        .delete()
+        .eq('id', id);
+      throwIfError(error);
+    },
+    async incrementViews(id) {
+      const current = await this.getVideo(id);
+      if (!current) return null;
+      return this.updateVideo(id, {
+        title: current.title,
+        description: current.description,
+        category: current.category,
+        tags: current.tags,
+        source_type: current.source_type,
+        video_path: current.video_path,
+        thumbnail_path: current.thumbnail_path,
+        views: Number(current.views || 0) + 1
+      });
+    }
+  };
+}
+
 function normalizeVideo(row) {
   return {
     id: row.id,
@@ -223,27 +358,33 @@ function normalizeVideo(row) {
     video_path: row.video_path,
     thumbnail_path: row.thumbnail_path,
     created_at: row.created_at,
-    views: row.views
+    views: Number(row.views || 0)
   };
 }
 
-app.get('/api/videos', (req, res) => {
-  const videos = selectAll('SELECT * FROM videos ORDER BY datetime(created_at) DESC, id DESC')
-    .map(normalizeVideo);
-
-  res.json(videos);
+app.get('/api/videos', async (req, res, next) => {
+  try {
+    const videos = (await videoStore.listVideos()).map(normalizeVideo);
+    res.json(videos);
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.get('/api/videos/:id', (req, res) => {
+app.get('/api/videos/:id', async (req, res, next) => {
   const id = Number(req.params.id);
-  const video = selectOne('SELECT * FROM videos WHERE id = ?', [id]);
 
-  if (!video) {
-    res.status(404).json({ message: 'Video tidak ditemukan' });
-    return;
+  try {
+    const video = await videoStore.getVideo(id);
+    if (!video) {
+      res.status(404).json({ message: 'Video tidak ditemukan' });
+      return;
+    }
+
+    res.json(normalizeVideo(video));
+  } catch (error) {
+    next(error);
   }
-
-  res.json(normalizeVideo(video));
 });
 
 app.get('/api/config', (req, res) => {
@@ -254,7 +395,7 @@ app.get('/api/config', (req, res) => {
   });
 });
 
-app.post('/api/videos', uploadFields, (req, res) => {
+app.post('/api/videos', uploadFields, async (req, res, next) => {
   const { title, description = '', category = '', tags = '', video_url = '' } = req.body;
   const sourceType = normalizeSourceType(req.body.source_type);
   const videoFile = req.files?.video?.[0];
@@ -304,13 +445,15 @@ app.post('/api/videos', uploadFields, (req, res) => {
     : buildDefaultThumbnailPath(sourceType, video_url.trim());
 
   try {
-    db.run(`
-      INSERT INTO videos (title, description, category, tags, source_type, video_path, thumbnail_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [title.trim(), description.trim(), category.trim(), tags.trim(), sourceType, videoPath, thumbnailPath]);
-    saveDatabase();
-
-    const video = selectOne('SELECT * FROM videos ORDER BY id DESC LIMIT 1');
+    const video = await videoStore.createVideo({
+      title: title.trim(),
+      description: description.trim(),
+      category: category.trim(),
+      tags: tags.trim(),
+      source_type: sourceType,
+      video_path: videoPath,
+      thumbnail_path: thumbnailPath
+    });
     if (!video) {
       throw new Error('Metadata video gagal disimpan.');
     }
@@ -319,123 +462,127 @@ app.post('/api/videos', uploadFields, (req, res) => {
   } catch (error) {
     removeFile(videoPath);
     removeFile(thumbnailPath);
-    res.status(500).json({ message: error.message || 'Upload video gagal.' });
+    next(error);
   }
 });
 
-app.put('/api/videos/:id', uploadFields, (req, res) => {
+app.put('/api/videos/:id', uploadFields, async (req, res, next) => {
   const id = Number(req.params.id);
-  const current = selectOne('SELECT * FROM videos WHERE id = ?', [id]);
 
-  if (!current) {
-    res.status(404).json({ message: 'Video tidak ditemukan.' });
-    return;
-  }
+  try {
+    const current = await videoStore.getVideo(id);
 
-  const sourceType = normalizeSourceType(req.body.source_type || current.source_type);
-  const videoFile = req.files?.video?.[0];
-  const thumbnailFile = req.files?.thumbnail?.[0];
-  const externalUrl = (req.body.video_url || '').trim();
-  let nextVideoPath = current.video_path;
-
-  if (sourceType === 'local' && !ALLOW_LOCAL_UPLOADS) {
-    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'Upload lokal dimatikan di hosting ini. Gunakan Google Drive.' });
-    return;
-  }
-
-  if (sourceType === 'local') {
-    if (videoFile) {
-      nextVideoPath = `/videos/${videoFile.filename}`;
-    } else if (normalizeSourceType(current.source_type) !== 'local') {
-      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-      res.status(400).json({ message: 'File video wajib diisi saat pindah ke sumber lokal.' });
+    if (!current) {
+      res.status(404).json({ message: 'Video tidak ditemukan.' });
       return;
     }
-  } else if (externalUrl) {
-    nextVideoPath = buildExternalVideoPath(sourceType, externalUrl);
-  } else if (sourceType !== normalizeSourceType(current.source_type)) {
-    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'URL wajib diisi saat mengganti sumber video.' });
-    return;
+
+    const sourceType = normalizeSourceType(req.body.source_type || current.source_type);
+    const videoFile = req.files?.video?.[0];
+    const thumbnailFile = req.files?.thumbnail?.[0];
+    const externalUrl = (req.body.video_url || '').trim();
+    let nextVideoPath = current.video_path;
+
+    if (sourceType === 'local' && !ALLOW_LOCAL_UPLOADS) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: 'Upload lokal dimatikan di hosting ini. Gunakan Google Drive.' });
+      return;
+    }
+
+    if (sourceType === 'local') {
+      if (videoFile) {
+        nextVideoPath = `/videos/${videoFile.filename}`;
+      } else if (normalizeSourceType(current.source_type) !== 'local') {
+        if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+        res.status(400).json({ message: 'File video wajib diisi saat pindah ke sumber lokal.' });
+        return;
+      }
+    } else if (externalUrl) {
+      nextVideoPath = buildExternalVideoPath(sourceType, externalUrl);
+    } else if (sourceType !== normalizeSourceType(current.source_type)) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: 'URL wajib diisi saat mengganti sumber video.' });
+      return;
+    }
+
+    const externalUrlError = sourceType === 'local' || !externalUrl ? '' : getExternalUrlError(sourceType, externalUrl);
+    if (externalUrlError) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: externalUrlError });
+      return;
+    }
+
+    if (!nextVideoPath) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: 'URL video tidak valid.' });
+      return;
+    }
+
+    const nextThumbnailPath = thumbnailFile
+      ? `/thumbnails/${thumbnailFile.filename}`
+      : (sourceType === 'youtube' && externalUrl
+        ? buildDefaultThumbnailPath(sourceType, externalUrl)
+        : current.thumbnail_path);
+
+    const updated = await videoStore.updateVideo(id, {
+      title: (req.body.title || current.title).trim(),
+      description: (req.body.description || '').trim(),
+      category: (req.body.category || '').trim(),
+      tags: (req.body.tags || '').trim(),
+      source_type: sourceType,
+      video_path: nextVideoPath,
+      thumbnail_path: nextThumbnailPath
+    });
+
+    if (videoFile || sourceType !== normalizeSourceType(current.source_type)) removeFile(current.video_path);
+    if (thumbnailFile && current.thumbnail_path) removeFile(current.thumbnail_path);
+
+    res.json(normalizeVideo(updated));
+  } catch (error) {
+    next(error);
   }
-
-  const externalUrlError = sourceType === 'local' || !externalUrl ? '' : getExternalUrlError(sourceType, externalUrl);
-  if (externalUrlError) {
-    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: externalUrlError });
-    return;
-  }
-
-  if (!nextVideoPath) {
-    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'URL video tidak valid.' });
-    return;
-  }
-
-  const nextThumbnailPath = thumbnailFile
-    ? `/thumbnails/${thumbnailFile.filename}`
-    : (sourceType === 'youtube' && externalUrl
-      ? buildDefaultThumbnailPath(sourceType, externalUrl)
-      : current.thumbnail_path);
-
-  db.run(`
-    UPDATE videos
-    SET title = ?, description = ?, category = ?, tags = ?, source_type = ?, video_path = ?, thumbnail_path = ?
-    WHERE id = ?
-  `, [
-    (req.body.title || current.title).trim(),
-    (req.body.description || '').trim(),
-    (req.body.category || '').trim(),
-    (req.body.tags || '').trim(),
-    sourceType,
-    nextVideoPath,
-    nextThumbnailPath,
-    id
-  ]);
-  saveDatabase();
-
-  if (videoFile || sourceType !== normalizeSourceType(current.source_type)) removeFile(current.video_path);
-  if (thumbnailFile && current.thumbnail_path) removeFile(current.thumbnail_path);
-
-  const updated = selectOne('SELECT * FROM videos WHERE id = ?', [id]);
-  res.json(normalizeVideo(updated));
 });
 
-app.delete('/api/videos/:id', (req, res) => {
+app.delete('/api/videos/:id', async (req, res, next) => {
   const id = Number(req.params.id);
-  const video = selectOne('SELECT * FROM videos WHERE id = ?', [id]);
 
-  if (!video) {
-    res.status(404).json({ message: 'Video tidak ditemukan.' });
-    return;
+  try {
+    const video = await videoStore.getVideo(id);
+
+    if (!video) {
+      res.status(404).json({ message: 'Video tidak ditemukan.' });
+      return;
+    }
+
+    await videoStore.deleteVideo(id);
+    removeFile(video.video_path);
+    removeFile(video.thumbnail_path);
+
+    res.json({ message: 'Video berhasil dihapus.' });
+  } catch (error) {
+    next(error);
   }
-
-  db.run('DELETE FROM videos WHERE id = ?', [id]);
-  saveDatabase();
-  removeFile(video.video_path);
-  removeFile(video.thumbnail_path);
-
-  res.json({ message: 'Video berhasil dihapus.' });
 });
 
-app.post('/api/videos/:id/views', (req, res) => {
+app.post('/api/videos/:id/views', async (req, res, next) => {
   const id = Number(req.params.id);
-  db.run('UPDATE videos SET views = views + 1 WHERE id = ?', [id]);
-  saveDatabase();
-  const changes = selectOne('SELECT changes() AS total');
 
-  if (changes.total === 0) {
-    res.status(404).json({ message: 'Video tidak ditemukan.' });
-    return;
+  try {
+    const video = await videoStore.incrementViews(id);
+
+    if (!video) {
+      res.status(404).json({ message: 'Video tidak ditemukan.' });
+      return;
+    }
+
+    res.json(normalizeVideo(video));
+  } catch (error) {
+    next(error);
   }
-
-  const video = selectOne('SELECT * FROM videos WHERE id = ?', [id]);
-  res.json(normalizeVideo(video));
 });
 
 app.use((err, req, res, next) => {
@@ -447,33 +594,40 @@ app.use((err, req, res, next) => {
 });
 
 async function startServer() {
-  const SQL = await initSqlJs({
-    locateFile: (file) => path.join(ROOT_DIR, 'node_modules', 'sql.js', 'dist', file)
-  });
+  if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    videoStore = createSupabaseStore();
+    console.log('Metadata video memakai Supabase.');
+  } else {
+    const SQL = await initSqlJs({
+      locateFile: (file) => path.join(ROOT_DIR, 'node_modules', 'sql.js', 'dist', file)
+    });
 
-  db = fs.existsSync(DB_PATH)
-    ? new SQL.Database(fs.readFileSync(DB_PATH))
-    : new SQL.Database();
+    db = fs.existsSync(DB_PATH)
+      ? new SQL.Database(fs.readFileSync(DB_PATH))
+      : new SQL.Database();
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS videos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT DEFAULT '',
-      category TEXT DEFAULT '',
-      tags TEXT DEFAULT '',
-      source_type TEXT NOT NULL DEFAULT 'local',
-      video_path TEXT NOT NULL,
-      thumbnail_path TEXT DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      views INTEGER NOT NULL DEFAULT 0
-    )
-  `);
-  const columns = selectAll('PRAGMA table_info(videos)').map((column) => column.name);
-  if (!columns.includes('source_type')) {
-    db.run("ALTER TABLE videos ADD COLUMN source_type TEXT NOT NULL DEFAULT 'local'");
+    db.run(`
+      CREATE TABLE IF NOT EXISTS videos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        category TEXT DEFAULT '',
+        tags TEXT DEFAULT '',
+        source_type TEXT NOT NULL DEFAULT 'local',
+        video_path TEXT NOT NULL,
+        thumbnail_path TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        views INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    const columns = selectAll('PRAGMA table_info(videos)').map((column) => column.name);
+    if (!columns.includes('source_type')) {
+      db.run("ALTER TABLE videos ADD COLUMN source_type TEXT NOT NULL DEFAULT 'local'");
+    }
+    saveDatabase();
+    videoStore = createSqliteStore();
+    console.log('Metadata video memakai SQLite lokal.');
   }
-  saveDatabase();
 
   app.listen(PORT, () => {
     console.log(`Video Library berjalan di http://localhost:${PORT}`);

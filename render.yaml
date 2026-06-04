@@ -14,3 +14,7 @@ services:
         value: false
       - key: DEFAULT_SOURCE
         value: google_drive
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
