@@ -13,6 +13,7 @@ Buka:
 
 - Halaman utama: `http://localhost:3000`
 - Halaman admin: `http://localhost:3000/admin.html`
+- Halaman tonton: `http://localhost:3000/watch.html?id=VIDEO_ID`
 
 ## Catatan storage
 
@@ -50,6 +51,7 @@ Catatan penting: Render Free tidak menyediakan persistent disk gratis untuk file
 ## API
 
 - `GET /api/videos`
+- `GET /api/videos/:id`
 - `POST /api/videos`
 - `PUT /api/videos/:id`
 - `DELETE /api/videos/:id`

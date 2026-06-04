@@ -174,7 +174,7 @@ function renderPlayer(video) {
 
 function renderVideoCard(video) {
   return `
-    <article class="video-card">
+    <article class="video-card" data-watch-id="${video.id}">
       ${renderPlayer(video)}
       <div class="video-info">
         <h2>${escapeHtml(video.title)}</h2>
@@ -186,6 +186,7 @@ function renderVideoCard(video) {
           <span>${video.views} views</span>
           <span>${formatDate(video.created_at)}</span>
         </div>
+        <a class="watch-link" href="/watch.html?id=${video.id}">Tonton</a>
       </div>
     </article>
   `;
@@ -206,9 +207,16 @@ function renderPublicVideos() {
   grid.innerHTML = videos.map(renderVideoCard).join('');
   emptyState.hidden = videos.length > 0;
 
-  grid.querySelectorAll('[data-count-view]').forEach((player) => {
-    const eventName = player.tagName.toLowerCase() === 'iframe' ? 'load' : 'play';
+  grid.querySelectorAll('video[data-count-view]').forEach((player) => {
+    const eventName = 'play';
     player.addEventListener(eventName, async () => countView(player), { once: true });
+  });
+
+  grid.querySelectorAll('.video-card').forEach((card) => {
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('video, iframe, a, button')) return;
+      window.location.href = `/watch.html?id=${card.dataset.watchId}`;
+    });
   });
 }
 

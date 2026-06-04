@@ -234,6 +234,18 @@ app.get('/api/videos', (req, res) => {
   res.json(videos);
 });
 
+app.get('/api/videos/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const video = selectOne('SELECT * FROM videos WHERE id = ?', [id]);
+
+  if (!video) {
+    res.status(404).json({ message: 'Video tidak ditemukan' });
+    return;
+  }
+
+  res.json(normalizeVideo(video));
+});
+
 app.get('/api/config', (req, res) => {
   res.json({
     allow_local_uploads: ALLOW_LOCAL_UPLOADS,

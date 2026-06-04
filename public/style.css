@@ -182,6 +182,7 @@ textarea {
 
 .video-card {
   overflow: hidden;
+  cursor: pointer;
 }
 
 .video-card video,
@@ -204,6 +205,19 @@ textarea {
 
 .video-info h2 {
   margin-bottom: 8px;
+}
+
+.watch-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  margin-top: 14px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 800;
 }
 
 .meta {
@@ -341,6 +355,102 @@ label {
   text-align: center;
 }
 
+.watch-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 24px;
+  align-items: start;
+}
+
+.watch-main,
+.watch-sidebar {
+  min-width: 0;
+}
+
+.watch-player {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 8px;
+  background: var(--video-bg);
+}
+
+.watch-details {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.watch-details p {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.back-home-link {
+  width: fit-content;
+  padding: 0 16px;
+}
+
+.watch-sidebar h2 {
+  margin-bottom: 14px;
+}
+
+.recommendation-list {
+  display: grid;
+  gap: 12px;
+}
+
+.recommendation-item {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.recommendation-item img,
+.recommendation-placeholder {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  background: var(--video-bg);
+  object-fit: cover;
+}
+
+.recommendation-placeholder {
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+}
+
+.recommendation-item h3 {
+  margin: 0 0 6px;
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.recommendation-item p {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.watch-error {
+  display: grid;
+  gap: 16px;
+  padding: 32px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
 @media (max-width: 760px) {
   .topbar {
     padding: 0 16px;
@@ -357,6 +467,7 @@ label {
   }
 
   .admin-page,
+  .watch-page,
   .form-row,
   .admin-item {
     grid-template-columns: 1fr;
@@ -367,5 +478,15 @@ label {
   .admin-item iframe,
   .admin-placeholder {
     width: 100%;
+  }
+
+  .recommendation-item {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .recommendation-item {
+    grid-template-columns: 1fr;
   }
 }
