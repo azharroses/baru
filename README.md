@@ -44,9 +44,42 @@ Tambahkan ke Render Environment:
 ```text
 SUPABASE_URL=isi_project_url_supabase
 SUPABASE_SERVICE_ROLE_KEY=isi_service_role_key_supabase
+SUPABASE_PUBLISHABLE_KEY=isi_publishable_key_supabase
 ```
 
-Jangan taruh `service_role` key di frontend. Key ini hanya dipakai server Express di Render.
+Jangan taruh `service_role` key di frontend. Key ini hanya dipakai server Express di Render. `SUPABASE_PUBLISHABLE_KEY` boleh dipakai frontend untuk login.
+
+Role user ada di tabel `profiles`:
+
+- `superadmin`: bisa lihat semua video dan mengelola admin
+- `user_a`: bisa melihat video sesuai `allowed_tags`, misalnya `public,keluarga,private`
+- `user_b`: bisa melihat video sesuai `allowed_tags`, misalnya `public,teman`
+
+Contoh menjadikan satu user sebagai superadmin:
+
+```sql
+UPDATE public.profiles
+SET role = 'superadmin', allowed_tags = '*'
+WHERE email = 'email-admin@example.com';
+```
+
+Contoh user keluarga:
+
+```sql
+UPDATE public.profiles
+SET role = 'user_a', allowed_tags = 'public,keluarga,private'
+WHERE email = 'email-keluarga@example.com';
+```
+
+Contoh user teman:
+
+```sql
+UPDATE public.profiles
+SET role = 'user_b', allowed_tags = 'public,teman'
+WHERE email = 'email-teman@example.com';
+```
+
+Video hanya terlihat jika salah satu tag video cocok dengan `allowed_tags` user. Video umum sebaiknya diberi tag `public`.
 
 ## Deploy ke Render Free + Google Drive + Supabase
 
@@ -68,6 +101,7 @@ ENABLE_YOUTUBE=false
 DEFAULT_SOURCE=google_drive
 SUPABASE_URL=isi_project_url_supabase
 SUPABASE_SERVICE_ROLE_KEY=isi_service_role_key_supabase
+SUPABASE_PUBLISHABLE_KEY=isi_publishable_key_supabase
 ```
 
 Dengan konfigurasi itu, halaman admin akan fokus ke Google Drive dan field upload file video lokal disembunyikan.

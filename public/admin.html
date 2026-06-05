@@ -11,6 +11,9 @@
       <a class="brand" href="/">Video Library</a>
       <nav>
         <button id="themeToggle" class="theme-toggle" type="button" aria-label="Ganti tema">Gelap</button>
+        <span id="authBadge" class="auth-badge" hidden></span>
+        <a id="loginLink" href="/login.html">Login</a>
+        <button id="logoutButton" class="theme-toggle" type="button" hidden>Logout</button>
         <a href="/">Halaman Utama</a>
       </nav>
     </header>
@@ -86,6 +89,7 @@
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
     <script src="script.js"></script>
   </body>
 </html>

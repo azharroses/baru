@@ -89,6 +89,9 @@ async function incrementWatchView(id) {
 }
 
 async function initWatchPage() {
+  await loadConfig();
+  await initAuth();
+
   const id = getWatchId();
   if (!id) {
     renderNotFound();

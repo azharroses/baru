@@ -15,3 +15,32 @@ CREATE TABLE IF NOT EXISTS public.videos (
 
 CREATE INDEX IF NOT EXISTS videos_category_idx ON public.videos (category);
 CREATE INDEX IF NOT EXISTS videos_created_at_idx ON public.videos (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user_b',
+  allowed_tags TEXT NOT NULL DEFAULT 'public',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT profiles_role_check
+    CHECK (role IN ('superadmin', 'user_a', 'user_b'))
+);
+
+CREATE INDEX IF NOT EXISTS profiles_role_idx ON public.profiles (role);
+
+CREATE OR REPLACE FUNCTION public.handle_new_user_profile()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, role, allowed_tags)
+  VALUES (NEW.id, NEW.email, 'user_b', 'public')
+  ON CONFLICT (id) DO NOTHING;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+
+CREATE TRIGGER on_auth_user_created
+AFTER INSERT ON auth.users
+FOR EACH ROW EXECUTE FUNCTION public.handle_new_user_profile();

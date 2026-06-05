@@ -18,6 +18,7 @@ const ENABLE_YOUTUBE = process.env.ENABLE_YOUTUBE !== 'false';
 const DEFAULT_SOURCE = process.env.DEFAULT_SOURCE || (ALLOW_LOCAL_UPLOADS ? 'local' : 'google_drive');
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 
 [PUBLIC_DIR, VIDEOS_DIR, THUMBNAILS_DIR].forEach((dir) => {
   if (!fs.existsSync(dir)) {
@@ -27,6 +28,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 let db;
 let videoStore;
+let supabaseAdmin;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -273,7 +275,7 @@ function createSqliteStore() {
 }
 
 function createSupabaseStore() {
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  const supabase = supabaseAdmin || createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: {
       persistSession: false
     }
@@ -347,6 +349,70 @@ function createSupabaseStore() {
   };
 }
 
+function splitTags(value = '') {
+  return String(value)
+    .split(',')
+    .map((tag) => tag.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function canSeeVideo(video, profile) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return true;
+  if (profile?.role === 'superadmin') return true;
+
+  const allowedTags = splitTags(profile?.allowed_tags || 'public');
+  if (allowedTags.includes('*')) return true;
+
+  const videoTags = splitTags(video.tags);
+  return videoTags.some((tag) => allowedTags.includes(tag));
+}
+
+async function getAuthContext(req) {
+  if (!supabaseAdmin) {
+    return { user: null, profile: { role: 'superadmin', allowed_tags: '*' } };
+  }
+
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!token) {
+    return { user: null, profile: null };
+  }
+
+  const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(token);
+  if (userError || !userData?.user) {
+    return { user: null, profile: null };
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .select('*')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    throw new Error(profileError.message);
+  }
+
+  return {
+    user: userData.user,
+    profile: profile || {
+      id: userData.user.id,
+      email: userData.user.email,
+      role: 'user_b',
+      allowed_tags: 'public'
+    }
+  };
+}
+
+async function requireSuperadmin(req, res) {
+  const auth = await getAuthContext(req);
+  if (auth.profile?.role !== 'superadmin') {
+    res.status(403).json({ message: 'Akses hanya untuk superadmin.' });
+    return null;
+  }
+  return auth;
+}
+
 function normalizeVideo(row) {
   return {
     id: row.id,
@@ -364,7 +430,10 @@ function normalizeVideo(row) {
 
 app.get('/api/videos', async (req, res, next) => {
   try {
-    const videos = (await videoStore.listVideos()).map(normalizeVideo);
+    const auth = await getAuthContext(req);
+    const videos = (await videoStore.listVideos())
+      .filter((video) => canSeeVideo(video, auth.profile))
+      .map(normalizeVideo);
     res.json(videos);
   } catch (error) {
     next(error);
@@ -375,8 +444,9 @@ app.get('/api/videos/:id', async (req, res, next) => {
   const id = Number(req.params.id);
 
   try {
+    const auth = await getAuthContext(req);
     const video = await videoStore.getVideo(id);
-    if (!video) {
+    if (!video || !canSeeVideo(video, auth.profile)) {
       res.status(404).json({ message: 'Video tidak ditemukan' });
       return;
     }
@@ -391,8 +461,30 @@ app.get('/api/config', (req, res) => {
   res.json({
     allow_local_uploads: ALLOW_LOCAL_UPLOADS,
     enable_youtube: ENABLE_YOUTUBE,
-    default_source: normalizeSourceType(DEFAULT_SOURCE)
+    default_source: normalizeSourceType(DEFAULT_SOURCE),
+    supabase_url: SUPABASE_URL || '',
+    supabase_publishable_key: SUPABASE_PUBLISHABLE_KEY,
+    auth_enabled: Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY)
   });
+});
+
+app.get('/api/me', async (req, res, next) => {
+  try {
+    const auth = await getAuthContext(req);
+    if (!auth.user) {
+      res.status(401).json({ message: 'Belum login.' });
+      return;
+    }
+
+    res.json({
+      id: auth.user.id,
+      email: auth.user.email,
+      role: auth.profile?.role || 'user_b',
+      allowed_tags: auth.profile?.allowed_tags || 'public'
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post('/api/videos', uploadFields, async (req, res, next) => {
@@ -401,50 +493,57 @@ app.post('/api/videos', uploadFields, async (req, res, next) => {
   const videoFile = req.files?.video?.[0];
   const thumbnailFile = req.files?.thumbnail?.[0];
 
-  if (!title) {
-    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'Title wajib diisi.' });
-    return;
-  }
-
-  if (sourceType === 'local' && !ALLOW_LOCAL_UPLOADS) {
-    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'Upload lokal dimatikan di hosting ini. Gunakan Google Drive.' });
-    return;
-  }
-
-  if (sourceType === 'local' && !videoFile) {
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'File video wajib diisi untuk sumber lokal.' });
-    return;
-  }
-
-  const videoPath = sourceType === 'local'
-    ? `/videos/${videoFile.filename}`
-    : buildExternalVideoPath(sourceType, video_url.trim());
-
-  const externalUrlError = sourceType === 'local' ? '' : getExternalUrlError(sourceType, video_url.trim());
-  if (externalUrlError) {
-    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: externalUrlError });
-    return;
-  }
-
-  if (!videoPath) {
-    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
-    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
-    res.status(400).json({ message: 'URL video tidak valid.' });
-    return;
-  }
-
-  const thumbnailPath = thumbnailFile
-    ? `/thumbnails/${thumbnailFile.filename}`
-    : buildDefaultThumbnailPath(sourceType, video_url.trim());
-
   try {
+    const auth = await requireSuperadmin(req, res);
+    if (!auth) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      return;
+    }
+
+    if (!title) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: 'Title wajib diisi.' });
+      return;
+    }
+
+    if (sourceType === 'local' && !ALLOW_LOCAL_UPLOADS) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: 'Upload lokal dimatikan di hosting ini. Gunakan Google Drive.' });
+      return;
+    }
+
+    if (sourceType === 'local' && !videoFile) {
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: 'File video wajib diisi untuk sumber lokal.' });
+      return;
+    }
+
+    const videoPath = sourceType === 'local'
+      ? `/videos/${videoFile.filename}`
+      : buildExternalVideoPath(sourceType, video_url.trim());
+
+    const externalUrlError = sourceType === 'local' ? '' : getExternalUrlError(sourceType, video_url.trim());
+    if (externalUrlError) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: externalUrlError });
+      return;
+    }
+
+    if (!videoPath) {
+      if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+      if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
+      res.status(400).json({ message: 'URL video tidak valid.' });
+      return;
+    }
+
+    const thumbnailPath = thumbnailFile
+      ? `/thumbnails/${thumbnailFile.filename}`
+      : buildDefaultThumbnailPath(sourceType, video_url.trim());
+
     const video = await videoStore.createVideo({
       title: title.trim(),
       description: description.trim(),
@@ -460,8 +559,8 @@ app.post('/api/videos', uploadFields, async (req, res, next) => {
 
     res.status(201).json(normalizeVideo(video));
   } catch (error) {
-    removeFile(videoPath);
-    removeFile(thumbnailPath);
+    if (videoFile) removeFile(`/videos/${videoFile.filename}`);
+    if (thumbnailFile) removeFile(`/thumbnails/${thumbnailFile.filename}`);
     next(error);
   }
 });
@@ -470,6 +569,9 @@ app.put('/api/videos/:id', uploadFields, async (req, res, next) => {
   const id = Number(req.params.id);
 
   try {
+    const auth = await requireSuperadmin(req, res);
+    if (!auth) return;
+
     const current = await videoStore.getVideo(id);
 
     if (!current) {
@@ -551,6 +653,9 @@ app.delete('/api/videos/:id', async (req, res, next) => {
   const id = Number(req.params.id);
 
   try {
+    const auth = await requireSuperadmin(req, res);
+    if (!auth) return;
+
     const video = await videoStore.getVideo(id);
 
     if (!video) {
@@ -572,6 +677,13 @@ app.post('/api/videos/:id/views', async (req, res, next) => {
   const id = Number(req.params.id);
 
   try {
+    const auth = await getAuthContext(req);
+    const current = await videoStore.getVideo(id);
+    if (!current || !canSeeVideo(current, auth.profile)) {
+      res.status(404).json({ message: 'Video tidak ditemukan.' });
+      return;
+    }
+
     const video = await videoStore.incrementViews(id);
 
     if (!video) {
@@ -595,6 +707,11 @@ app.use((err, req, res, next) => {
 
 async function startServer() {
   if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: {
+        persistSession: false
+      }
+    });
     videoStore = createSupabaseStore();
     console.log('Metadata video memakai Supabase.');
   } else {

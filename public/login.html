@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - Video Library</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">Video Library</a>
+      <nav>
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Ganti tema">Gelap</button>
+        <a href="/">Home</a>
+      </nav>
+    </header>
+
+    <main class="page login-page">
+      <section class="editor-panel login-panel">
+        <h1>Login</h1>
+        <form id="loginForm" class="video-form">
+          <label>
+            Email
+            <input id="loginEmail" name="email" type="email" required />
+          </label>
+          <label>
+            Password
+            <input id="loginPassword" name="password" type="password" required />
+          </label>
+          <button class="primary-button" type="submit">Login</button>
+          <p id="loginMessage" class="form-message" role="status"></p>
+        </form>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
+    <script src="script.js"></script>
+    <script src="login.js"></script>
+  </body>
+</html>

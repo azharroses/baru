@@ -97,6 +97,16 @@ a {
   cursor: pointer;
 }
 
+.auth-badge {
+  max-width: 240px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .page {
   width: min(1120px, calc(100% - 32px));
   margin: 0 auto;
@@ -449,6 +459,15 @@ label {
   border: 1px dashed var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.login-page {
+  display: grid;
+  place-items: start center;
+}
+
+.login-panel {
+  width: min(460px, 100%);
 }
 
 @media (max-width: 760px) {

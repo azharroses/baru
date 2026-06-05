@@ -3,8 +3,14 @@ const state = {
   config: {
     allow_local_uploads: true,
     enable_youtube: true,
-    default_source: 'local'
-  }
+    default_source: 'local',
+    supabase_url: '',
+    supabase_publishable_key: '',
+    auth_enabled: false
+  },
+  supabase: null,
+  session: null,
+  me: null
 };
 
 const rupiahDate = new Intl.DateTimeFormat('id-ID', {
@@ -50,7 +56,17 @@ function escapeHtml(value = '') {
 }
 
 async function requestJson(url, options) {
-  const response = await fetch(url, options);
+  const requestOptions = options || {};
+  const headers = new Headers(requestOptions.headers || {});
+
+  if (state.session?.access_token) {
+    headers.set('Authorization', `Bearer ${state.session.access_token}`);
+  }
+
+  const response = await fetch(url, {
+    ...requestOptions,
+    headers
+  });
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await response.json() : {};
 
@@ -71,6 +87,60 @@ async function loadConfig() {
   } catch (error) {
     console.warn('Config tidak bisa dimuat, memakai default lokal.', error);
   }
+}
+
+async function initAuth() {
+  if (!state.config.auth_enabled || !window.supabase) {
+    updateAuthUi();
+    return;
+  }
+
+  if (!state.supabase) {
+    state.supabase = window.supabase.createClient(
+      state.config.supabase_url,
+      state.config.supabase_publishable_key
+    );
+  }
+
+  const { data } = await state.supabase.auth.getSession();
+  state.session = data.session;
+
+  if (state.session) {
+    try {
+      state.me = await requestJson('/api/me');
+    } catch (error) {
+      state.me = null;
+    }
+  }
+
+  updateAuthUi();
+}
+
+function updateAuthUi() {
+  const loginLink = document.querySelector('#loginLink');
+  const logoutButton = document.querySelector('#logoutButton');
+  const authBadge = document.querySelector('#authBadge');
+
+  if (!loginLink || !logoutButton || !authBadge) return;
+
+  const isLoggedIn = Boolean(state.session);
+  loginLink.hidden = isLoggedIn;
+  logoutButton.hidden = !isLoggedIn;
+  authBadge.hidden = !isLoggedIn;
+  authBadge.textContent = state.me ? `${state.me.email} (${state.me.role})` : '';
+
+  logoutButton.onclick = async () => {
+    if (state.supabase) {
+      await state.supabase.auth.signOut();
+    }
+    state.session = null;
+    state.me = null;
+    window.location.href = '/login.html';
+  };
+}
+
+function isSuperadmin() {
+  return state.me?.role === 'superadmin';
 }
 
 function formatDate(value) {
@@ -402,6 +472,7 @@ async function handleAdminClick(event) {
 
 async function initPublicPage() {
   await loadConfig();
+  await initAuth();
   await loadVideos();
   renderPublicVideos();
   document.querySelector('#searchInput')?.addEventListener('input', renderPublicVideos);
@@ -409,6 +480,18 @@ async function initPublicPage() {
 
 async function initAdminPage() {
   await loadConfig();
+  await initAuth();
+
+  if (state.config.auth_enabled && !isSuperadmin()) {
+    document.querySelector('.admin-page').innerHTML = `
+      <section class="watch-error">
+        <h1>Akses hanya untuk superadmin.</h1>
+        <a class="secondary-button back-home-link" href="/login.html">Login Superadmin</a>
+      </section>
+    `;
+    return;
+  }
+
   document.querySelector('#videoForm')?.addEventListener('submit', handleSubmit);
   document.querySelector('#resetButton')?.addEventListener('click', resetForm);
   document.querySelector('#adminList')?.addEventListener('click', handleAdminClick);
@@ -422,6 +505,10 @@ async function initAdminPage() {
 
 document.addEventListener('DOMContentLoaded', () => {
   initTheme();
+
+  if (document.querySelector('#loginForm')) {
+    return;
+  }
 
   if (document.querySelector('#videoGrid')) {
     initPublicPage().catch(console.error);
